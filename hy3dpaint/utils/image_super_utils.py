@@ -13,29 +13,24 @@
 # by Tencent in accordance with TENCENT HUNYUAN COMMUNITY LICENSE AGREEMENT.
 
 import numpy as np
+import torch
 from PIL import Image
 
 
 class imageSuperNet:
     def __init__(self, config) -> None:
-        from realesrgan import RealESRGANer
-        from basicsr.archs.rrdbnet_arch import RRDBNet
+        import spandrel
 
-        model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
-        upsampler = RealESRGANer(
-            scale=4,
-            model_path=config.realesrgan_ckpt_path,
-            dni_weight=None,
-            model=model,
-            tile=0,
-            tile_pad=10,
-            pre_pad=0,
-            half=True,
-            gpu_id=None,
-        )
-        self.upsampler = upsampler
+        model = spandrel.ModelLoader().load_from_file(config.realesrgan_ckpt_path)
+        model = model.eval().cuda()
+        self.model = model
 
+    @torch.no_grad()
     def __call__(self, image):
-        output, _ = self.upsampler.enhance(np.array(image))
-        output = Image.fromarray(output)
-        return output
+        img = np.array(image).astype(np.float32) / 255.0
+        img = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0).cuda()
+        with torch.cuda.amp.autocast(enabled=True):
+            output = self.model(img)
+        output = output.squeeze(0).permute(1, 2, 0).clamp(0, 1).float().cpu().numpy()
+        output = (output * 255).astype(np.uint8)
+        return Image.fromarray(output)

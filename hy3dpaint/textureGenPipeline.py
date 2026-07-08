@@ -25,7 +25,7 @@ from utils.multiview_utils import multiviewDiffusionNet
 from utils.pipeline_utils import ViewProcessor
 from utils.image_super_utils import imageSuperNet
 from utils.uvwrap_utils import mesh_uv_wrap
-from DifferentiableRenderer.mesh_utils import convert_obj_to_glb
+from DifferentiableRenderer.mesh_utils import convert_obj_to_glb, export_self_contained_glb
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -183,10 +183,19 @@ class Hunyuan3DPaintPipeline:
             texture_mr = self.view_processor.texture_inpaint(texture_mr, mask_mr_np)
             self.render.set_texture_mr(texture_mr)
 
-        self.render.save_mesh(output_mesh_path, downsample=True)
+        # Save as OBJ first
+        obj_path = output_mesh_path if output_mesh_path.endswith('.obj') else output_mesh_path + '.obj'
+        self.render.save_mesh(obj_path, downsample=True)
 
         if save_glb:
-            convert_obj_to_glb(output_mesh_path, output_mesh_path.replace(".obj", ".glb"))
-            output_glb_path = output_mesh_path.replace(".obj", ".glb")
+            glb_path = output_mesh_path if output_mesh_path.endswith('.glb') else output_mesh_path.replace(".obj", ".glb")
+            convert_obj_to_glb(obj_path, glb_path)
+            # Also export self-contained GLB with all textures embedded
+            sc_glb_path = glb_path.replace('.glb', '_full.glb')
+            try:
+                export_self_contained_glb(obj_path, sc_glb_path)
+            except Exception as e:
+                print(f"Self-contained GLB export failed: {e}")
+            return glb_path
 
-        return output_mesh_path
+        return obj_path

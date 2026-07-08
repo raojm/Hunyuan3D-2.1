@@ -9,7 +9,7 @@ model:
     noise_in_channels: 12
 
     stable_diffusion_config:
-      pretrained_model_name_or_path: stabilityai/stable-diffusion-2-1
+      pretrained_model_name_or_path: ~/.cache/hy3dgen/tencent/Hunyuan3D-2.1/hunyuan3d-paintpbr-v2-1
       custom_pipeline: ./hunyuanpaintpbr
       
 

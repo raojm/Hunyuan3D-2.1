@@ -1,6 +1,12 @@
+import os
 import sys
 sys.path.insert(0, './hy3dshape')
 sys.path.insert(0, './hy3dpaint')
+
+# All generated demo artifacts (meshes, textures, intermediates) are written
+# into this dedicated directory instead of cluttering the project root.
+OUTPUT_DIR = 'outputs'
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 from PIL import Image
 from hy3dshape.rembg import BackgroundRemover
@@ -28,7 +34,12 @@ if image.mode == 'RGB':
     image = rembg(image)
 
 mesh = pipeline_shapegen(image=image)[0]
-mesh.export('demo.glb')
+mesh.export(os.path.join(OUTPUT_DIR, 'demo.glb'))
+
+# free GPU memory before loading paint model
+import torch
+del pipeline_shapegen
+torch.cuda.empty_cache()
 
 # paint
 max_num_view = 6  # can be 6 to 9
@@ -39,9 +50,9 @@ conf.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
 conf.custom_pipeline = "hy3dpaint/hunyuanpaintpbr"
 paint_pipeline = Hunyuan3DPaintPipeline(conf)
 
-output_mesh_path = 'demo_textured.glb'
+output_mesh_path = os.path.join(OUTPUT_DIR, 'demo_textured.glb')
 output_mesh_path = paint_pipeline(
-    mesh_path = "demo.glb", 
+    mesh_path = os.path.join(OUTPUT_DIR, 'demo.glb'), 
     image_path = 'assets/demo.png',
     output_mesh_path = output_mesh_path
 )

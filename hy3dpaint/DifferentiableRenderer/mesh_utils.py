@@ -14,11 +14,16 @@
 
 import os
 import cv2
-import bpy
 import math
 import numpy as np
 from io import StringIO
 from typing import Optional, Tuple, Dict, Any
+
+try:
+    import bpy
+    HAS_BPY = True
+except ImportError:
+    HAS_BPY = False
 
 
 def _safe_extract_attribute(obj: Any, attr_path: str, default: Any = None) -> Any:
@@ -264,21 +269,168 @@ def convert_obj_to_glb(
     auto_smooth_angle: float = 60,
     merge_vertices: bool = False,
 ) -> bool:
-    """Convert OBJ file to GLB format using Blender."""
+    """Convert OBJ file to GLB format using Blender (or trimesh fallback)."""
+    # Check if obj_path is actually an OBJ file (save_mesh saves OBJ regardless of extension)
+    actual_obj_path = obj_path
+    if obj_path.endswith('.glb'):
+        # save_mesh wrote OBJ content to .glb path, check if it's really OBJ
+        try:
+            with open(obj_path, 'r') as f:
+                first_line = f.readline()
+            if first_line.startswith(('mtllib', 'v ', 'o ', 'g ')):
+                # It's OBJ content, use it as-is
+                actual_obj_path = obj_path
+        except Exception:
+            pass
+
+    if HAS_BPY:
+        try:
+            _setup_blender_scene()
+            _clear_scene_objects()
+            bpy.ops.wm.obj_import(filepath=actual_obj_path)
+            _select_mesh_objects()
+            _merge_vertices_if_needed(merge_vertices)
+            _apply_shading(shade_type, auto_smooth_angle)
+            bpy.ops.export_scene.gltf(filepath=glb_path, use_active_scene=True)
+            return True
+        except Exception:
+            pass
+
+    # Fallback: use trimesh
     try:
-        _setup_blender_scene()
-        _clear_scene_objects()
+        import trimesh
+        # Detect file format
+        try:
+            with open(actual_obj_path, 'rb') as f:
+                magic = f.read(4)
+            if magic == b'glTF':
+                # Already GLB
+                return True
+        except Exception:
+            pass
 
-        # Import OBJ file
-        bpy.ops.wm.obj_import(filepath=obj_path)
-        _select_mesh_objects()
-
-        # Process meshes
-        _merge_vertices_if_needed(merge_vertices)
-        _apply_shading(shade_type, auto_smooth_angle)
-
-        # Export to GLB
-        bpy.ops.export_scene.gltf(filepath=glb_path, use_active_scene=True)
+        mesh = trimesh.load(actual_obj_path, force='mesh', file_type='obj')
+        if merge_vertices:
+            mesh.merge_vertices(merge_hashable=True)
+        # Write to temp file first, then replace
+        import tempfile, shutil
+        tmp = glb_path + '.tmp'
+        mesh.export(tmp, file_type='glb')
+        shutil.move(tmp, glb_path)
         return True
-    except Exception:
+    except Exception as e:
+        print(f"convert_obj_to_glb failed: {e}")
         return False
+
+
+def _find_texture(base_name, suffix):
+    """Find texture file by base name and suffix."""
+    import os
+    candidates = [
+        f"{base_name}_{suffix}.jpg",
+        f"{base_name}_{suffix}.png",
+        f"{base_name}.{suffix}.jpg",
+        f"{base_name}.{suffix}.png",
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return None
+
+
+def _pack_mr_image(metallic_path, roughness_path):
+    """Pack metallic/roughness maps into a single glTF metallicRoughness image.
+
+    glTF convention: R is unused, G = roughness, B = metallic.
+    Returns a PIL ``Image`` (RGB) or ``None`` if no PBR maps are present.
+    """
+    from PIL import Image
+    import numpy as np
+
+    m_img = (Image.open(metallic_path).convert('L')
+             if metallic_path and os.path.isfile(metallic_path) else None)
+    r_img = (Image.open(roughness_path).convert('L')
+             if roughness_path and os.path.isfile(roughness_path) else None)
+
+    if m_img is None and r_img is None:
+        return None
+
+    w = max((m_img.width if m_img else 0),
+            (r_img.width if r_img else 0)) or 2048
+    h = max((m_img.height if m_img else 0),
+            (r_img.height if r_img else 0)) or 2048
+    if m_img is not None and m_img.size != (w, h):
+        m_img = m_img.resize((w, h))
+    if r_img is not None and r_img.size != (w, h):
+        r_img = r_img.resize((w, h))
+
+    arr = np.zeros((h, w, 3), dtype=np.uint8)
+    if r_img is not None:
+        arr[:, :, 1] = np.array(r_img, dtype=np.uint8)   # G = roughness
+    if m_img is not None:
+        arr[:, :, 2] = np.array(m_img, dtype=np.uint8)   # B = metallic
+    return Image.fromarray(arr, 'RGB')
+
+
+def export_self_contained_glb(obj_path, glb_path):
+    """Export a fully self-contained GLB with all PBR textures embedded.
+
+    Uses trimesh's **standard, glTF-2.0-compliant** GLB exporter (no hand-rolled
+    binary packing). The exporter handles all buffer alignment and chunk
+    padding correctly, so the output loads cleanly in Blender's glTF importer
+    — unlike the previous manually-built GLB which triggered texture mixing.
+    """
+    import os
+    import trimesh
+    from trimesh.visual.material import PBRMaterial
+    from PIL import Image
+
+    # Resolve the real OBJ path (save_mesh may have written OBJ into .glb path)
+    actual_obj_path = obj_path
+    if obj_path.endswith('.glb'):
+        try:
+            with open(obj_path, 'r') as f:
+                if f.readline().startswith(('mtllib', 'v ', 'o ', 'g ')):
+                    actual_obj_path = obj_path
+        except Exception:
+            pass
+
+    base = os.path.splitext(actual_obj_path)[0]
+
+    # Locate on-disk textures
+    albedo_path = _find_texture(base, '')
+    if not albedo_path:
+        for candidate in (f"{base}.jpg", f"{base}.png", f"{base}.glb.jpg"):
+            if os.path.isfile(candidate):
+                albedo_path = candidate
+                break
+    metallic_path = _find_texture(base, 'metallic')
+    roughness_path = _find_texture(base, 'roughness')
+
+    # Load mesh (with UVs) via trimesh
+    mesh = trimesh.load(actual_obj_path, force='mesh', file_type='obj')
+
+    # Build the PBR material
+    material_kwargs = {
+        'baseColorFactor': [1.0, 1.0, 1.0, 1.0],
+        'metallicFactor': 1.0,
+        'roughnessFactor': 1.0,
+    }
+    if albedo_path and os.path.isfile(albedo_path):
+        material_kwargs['baseColorTexture'] = Image.open(albedo_path).convert('RGB')
+    mr_img = _pack_mr_image(metallic_path, roughness_path)
+    if mr_img is not None:
+        material_kwargs['metallicRoughnessTexture'] = mr_img
+
+    material = PBRMaterial(**material_kwargs)
+
+    # Attach material + UVs to the mesh visual
+    uv = (mesh.visual.uv
+          if hasattr(mesh.visual, 'uv') and mesh.visual.uv is not None
+          else None)
+    mesh.visual = trimesh.visual.TextureVisuals(uv=uv, material=material)
+
+    # Standard, spec-compliant GLB export (handles alignment internally)
+    scene = trimesh.Scene([mesh])
+    scene.export(glb_path, file_type='glb')
+    return True

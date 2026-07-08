@@ -77,6 +77,11 @@ class HunyuanPaint(pl.LightningModule):
         self.pbr_settings = pbr_settings
 
         # init modules
+        import os
+        if 'pretrained_model_name_or_path' in stable_diffusion_config:
+            stable_diffusion_config['pretrained_model_name_or_path'] = os.path.expanduser(
+                stable_diffusion_config['pretrained_model_name_or_path']
+            )
         pipeline = DiffusionPipeline.from_pretrained(**stable_diffusion_config)
         pipeline.set_pbr_settings(self.pbr_settings)
         pipeline.scheduler = EulerAncestralDiscreteScheduler.from_config(

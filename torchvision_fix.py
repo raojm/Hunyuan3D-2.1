@@ -85,6 +85,10 @@ def fix_torchvision_functional_tensor():
             # Create the mock module instance
             functional_tensor_mock = FunctionalTensorMock()
             
+            # Set required attributes directly so 'from ... import X' works
+            functional_tensor_mock.rgb_to_grayscale = FunctionalTensorMock.rgb_to_grayscale
+            functional_tensor_mock.resize = FunctionalTensorMock.resize
+
             # Monkey patch the old location
             sys.modules['torchvision.transforms.functional_tensor'] = functional_tensor_mock
             print("Applied compatibility fix: created functional_tensor mock module")

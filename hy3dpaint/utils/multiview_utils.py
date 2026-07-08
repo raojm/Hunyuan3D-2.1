@@ -34,10 +34,17 @@ class multiviewDiffusionNet:
         self.cfg = cfg
         self.mode = self.cfg.model.params.stable_diffusion_config.custom_pipeline[2:]
 
-        model_path = huggingface_hub.snapshot_download(
-            repo_id=config.multiview_pretrained_path,
-            allow_patterns=["hunyuan3d-paintpbr-v2-1/*"],
+        local_dir = os.path.expanduser(
+            os.path.join(os.environ.get('HY3DGEN_MODELS', '~/.cache/hy3dgen'),
+                         config.multiview_pretrained_path)
         )
+        if os.path.isdir(local_dir):
+            model_path = local_dir
+        else:
+            model_path = huggingface_hub.snapshot_download(
+                repo_id=config.multiview_pretrained_path,
+                allow_patterns=["hunyuan3d-paintpbr-v2-1/*"],
+            )
 
         model_path = os.path.join(model_path, "hunyuan3d-paintpbr-v2-1")
         pipeline = DiffusionPipeline.from_pretrained(
