@@ -183,3 +183,5 @@ demo_untextured.glb
 white_mesh_remesh.obj
 hy3dpaint/ckpt/
 
+outputs/
+.mimocode/.cron-lock
